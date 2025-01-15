@@ -5,11 +5,11 @@ from statistics import mean, stdev
 from CybORG import CybORG, CYBORG_VERSION
 from CybORG.Agents import SleepAgent, EnterpriseGreenAgent, FiniteStateRedAgent
 from CybORG.Simulator.Scenarios import EnterpriseScenarioGenerator
-
 from datetime import datetime
+from stable_baselines3 import PPO
+from CybORG.Wrappers.BlueFlatWrapper import BlueFlatWrapper  # Adjust as needed
 
 import json
-
 import sys
 import os
 
@@ -19,41 +19,35 @@ def rmkdir(path: str):
     partial_path = ""
     for p in path.split("/"):
         partial_path += p + "/"
-
         if os.path.exists(partial_path):
             if os.path.isdir(partial_path):
                 continue
             if os.path.isfile(partial_path):
                 raise RuntimeError(f"Cannot create {partial_path} (exists as file).")
-
         os.mkdir(partial_path)
 
 
-def load_submission(source: str):
-    """Load submission from a directory or zip file"""
+def load_submission(source: str, model_path: str):
+    """Load submission from a directory or zip file, along with the RL agent"""
     sys.path.insert(0, source)
+    from submission import Submission
 
-    if source.endswith(".zip"):
-        try:
-            # Load submission from zip.
-            from submission.submission import Submission
-        except ImportError as e:
-            raise ImportError(
-                """
-                Error loading submission from zip.
-                Please ensure the zip contains the path submission/submission.py
-                """
-            ).with_traceback(e.__traceback__)
-    else:
-        # Load submission normally
-        from submission import Submission
+    class RLAgentWrapper:
+        def __init__(self, model_path, env):
+            self.model = PPO.load(model_path)
+            self.env = env
 
-    # Remove submission from path.
+        def get_action(self, observation, action_space):
+            action, _ = self.model.predict(observation, deterministic=True)
+            return action
+
+    # Remove submission from path after loading
     sys.path.remove(source)
-    return Submission
+
+    return Submission, RLAgentWrapper
 
 
-def run_evaluation(submission, log_path, max_eps=100, write_to_file=True, seed=None):
+def run_evaluation(submission, rl_agent_class, model_path, log_path, max_eps=100, write_to_file=True, seed=None):
     cyborg_version = CYBORG_VERSION
     EPISODE_LENGTH = 500
     scenario = "Scenario4"
@@ -69,12 +63,11 @@ def run_evaluation(submission, log_path, max_eps=100, write_to_file=True, seed=N
     )
     cyborg = CybORG(sg, "sim", seed=seed)
     wrapped_cyborg = submission.wrap(cyborg)
-    
+    rl_agent = rl_agent_class(model_path, wrapped_cyborg)
+    submission.AGENTS["Blue"] = rl_agent  # Replace the Blue agent with RL agent
+
     print(version_header)
     print(author_header)
-    print(
-        f"Using agents {submission.AGENTS}, if this is incorrect please update the code to load in your agent"
-    )
 
     if write_to_file:
         if not log_path.endswith("/"):
@@ -91,7 +84,6 @@ def run_evaluation(submission, log_path, max_eps=100, write_to_file=True, seed=N
         r = []
         a = []
         o = []
-        count = 0
         for j in range(EPISODE_LENGTH):
             actions = {
                 agent_name: agent.get_action(
@@ -113,7 +105,7 @@ def run_evaluation(submission, log_path, max_eps=100, write_to_file=True, seed=N
                     {
                         agent_name: cyborg.get_last_action(agent_name)
                         for agent_name in wrapped_cyborg.agents
-                    }       
+                    }
                 )
                 o.append(
                     {
@@ -137,32 +129,14 @@ def run_evaluation(submission, log_path, max_eps=100, write_to_file=True, seed=N
     )
     print(reward_string)
 
-    print(f"File took {difference} amount of time to finish evaluation")
+    print(f"Evaluation completed in {difference}")
     if write_to_file:
         print(f"Saving results to {log_path}")
         with open(log_path + "summary.txt", "w") as data:
             data.write(version_header + "\n")
             data.write(author_header + "\n")
             data.write(reward_string + "\n")
-            data.write(f"Using agents {submission.AGENTS}")
-
-        with open(log_path + "full.txt", "w") as data:
-            data.write(version_header + "\n")
-            data.write(author_header + "\n")
-            data.write(reward_string + "\n")
-            for act, obs, sum_rew in zip(actions_log, obs_log, total_reward):
-                data.write(
-                    f"actions: {act},\n observations: {obs},\n total reward: {sum_rew}\n"
-                )
-        
-        with open(log_path + "actions.txt", "w") as data:
-            data.write(version_header + "\n")
-            data.write(author_header + "\n")
-            data.write(reward_string + "\n")
-            for act in zip(actions_log):
-                data.write(
-                    f"actions: {act}"
-                )
+            data.write(f"Using agents {submission.AGENTS}\n")
 
         with open(log_path + "summary.json", "w") as output:
             data = {
@@ -191,10 +165,6 @@ def run_evaluation(submission, log_path, max_eps=100, write_to_file=True, seed=N
             }
             json.dump(data, output)
 
-        with open(log_path + "scores.txt", "w") as scores:
-            scores.write(f"reward_mean: {reward_mean}\n")
-            scores.write(f"reward_stdev: {reward_stdev}\n")
-
 
 if __name__ == "__main__":
     import argparse
@@ -202,6 +172,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("CybORG Evaluation Script")
     parser.add_argument("submission_path", type=str)
     parser.add_argument("output_path", type=str)
+    parser.add_argument("model_path", type=str, help="Path to the trained RL model")
     parser.add_argument(
         "--append-timestamp",
         action="store_true",
@@ -214,6 +185,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     args.output_path = os.path.abspath(args.output_path)
     args.submission_path = os.path.abspath(args.submission_path)
+    args.model_path = os.path.abspath(args.model_path)
 
     if not args.output_path.endswith("/"):
         args.output_path += "/"
@@ -223,7 +195,7 @@ if __name__ == "__main__":
 
     rmkdir(args.output_path)
 
-    submission = load_submission(args.submission_path)
+    submission, RLAgentWrapper = load_submission(args.submission_path, args.model_path)
     run_evaluation(
-        submission, max_eps=args.max_eps, log_path=args.output_path, seed=args.seed
+        submission, RLAgentWrapper, args.model_path, max_eps=args.max_eps, log_path=args.output_path, seed=args.seed
     )

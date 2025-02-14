@@ -9,7 +9,7 @@ from CybORG.Agents.Wrappers import EnterpriseMAE
 from CybORG.Agents import SleepAgent, EnterpriseGreenAgent, FiniteStateRedAgent
 
 from ray.tune import register_env
-from ray.rllib.algorithms.mappo import MAPPOConfig
+from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.policy.policy import PolicySpec
 
 # Ensure Ray starts locally (Remove this if using a cluster)
@@ -51,30 +51,23 @@ algo_config = (
                 policy_class=None,  # RLlib default policy
                 observation_space=env.observation_space(cyborg_agent),
                 action_space=env.action_space(cyborg_agent),
-                config={"gamma": 0.99},  # Higher discount factor for MARL
+                config={"gamma": 0.85},
             ) for cyborg_agent, ray_agent in POLICY_MAP.items()
         },
         policy_mapping_fn=policy_mapper
     )
     .env_runners(
-        num_env_runners=2,  # Increase number of parallel rollout workers
-        num_envs_per_env_runner=4,  # Run more environments per worker
-        rollout_fragment_length=100  # Adjust rollout length
+        num_env_runners=0,  # Run two parallel rollout workers
+        num_envs_per_env_runner=3,  # Run 3 environments per worker
+        rollout_fragment_length=50  # Balance between updates and processing time
     )
     .training()
     .update_from_dict({
-        "train_batch_size": 24_000,  # Increase batch size for stability
-        "sgd_minibatch_size": 6_144,  # Larger minibatches
-        "num_sgd_iter": 20,  # More training iterations per batch
-        "_use_fp16": True,  # Enable mixed precision
-        "reuse_actors": True,  # Reduce overhead
-        "vf_loss_coeff": 1.0,  # Value function loss coefficient
-        "entropy_coeff": 0.02,  # Encourage exploration
-        "clip_param": 0.2,  # Adjust PPO clipping for MAPPO
-        "use_critic": True,  # Use centralized critic
-        "use_gae": True,  # Enable Generalized Advantage Estimation (GAE)
-        "lambda": 0.95,  # GAE discount factor
-        "lr": 5e-4,  # Learning rate adjustment
+        "train_batch_size": 12_000,  # Increase batch size for better GPU utilization
+        "sgd_minibatch_size": 4096,  # Larger batch updates per GPU step
+        "num_sgd_iter": 15,  # More updates per batch
+        "_use_fp16": True,  # Enable mixed precision for faster training
+        "reuse_actors": True,  # Reduce initialization overhead
     })
     .debugging(log_level="WARN")  # Reduce logging overhead for performance
 )
@@ -124,17 +117,15 @@ def log_training_info(iteration, train_info):
 
     print("="*50 + "\n")
 
+
+
 # Run training and log results
 for i in range(50):
     train_info = algo.train()
     log_training_info(i, train_info)
     log_gpu_usage()
 
-    # Save every 10 iterations
-    if i % 10 == 0:
-        algo.save(f"results/MAPPO_checkpoint_{i}")
+# Save trained model
+algo.save("results")
 
-# Save final trained model
-algo.save("results/MAPPO_final")
-
-print("MAPPO training complete. Check 'results' directory for checkpoints.")
+print("Training complete. Results saved in 'results' directory.")

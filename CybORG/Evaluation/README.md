@@ -76,7 +76,7 @@ path: `load_weights(os.path.dirname(__file__) + "/agent_weights.pkl")`.
 
 To verify that your agent and associated wrappers will be properly picked up by the evaluation
 script, test your submission using the evaluation script provided with CybORG:
-`python3 -m CybORG.Evaluation.evaluation --max-eps 2 /path/to/staging /tmp/output`.
+`py -m CybORG.Evaluation.evaluation --max-eps 2 /path/to/staging /tmp/output`.
 The standard output from this command should closely resemble the following output:
 
 ```
@@ -141,7 +141,7 @@ If you have run the evaluation script locally, please feel free to include your 
 as part of the submission in an `evaluation_output` directory in your submission zip file.
 
 To run the evaluation locally, use
-`python3 -m CybORG.Evaluation.evaluation /path/to/staging /path/to/staging/evaluation_output`.
+`py -m CybORG.Evaluation.evaluation /path/to/staging /path/to/staging/evaluation_output`.
 
 ### Issues
 
